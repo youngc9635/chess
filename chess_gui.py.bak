@@ -1,0 +1,267 @@
+"""
+Step 1: Prerequisites & Installation
+You need to install two libraries: pygame and python-chess.
+% pip install pygame
+% pip install python-chess
+
+Step 2: How to Run the Game
+Run the script from your terminal: 
+% python chess_gui.py
+A window should appear displaying the chessboard. You can now play a full game of chess!
+
+In Chess, White will go first. Click a white piece, the game whill show places the white piece can go.
+Then Black pieces can go. 
+"""
+
+import pygame
+import chess
+import sys
+import os
+
+# --- Constants ---
+# Screen dimensions
+WIDTH = 800
+HEIGHT = 800
+
+# Board dimensions
+BOARD_WIDTH = 720
+BOARD_HEIGHT = 720
+SQUARE_SIZE = BOARD_WIDTH // 8
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+LIGHT_SQUARE = (240, 217, 181)
+DARK_SQUARE = (181, 136, 99)
+HIGHLIGHT_COLOR = (100, 255, 100, 100) # Green with transparency
+SELECTED_COLOR = (255, 255, 0, 150) # Yellow with transparency
+
+class ChessGUI:
+    def __init__(self):
+        """
+        Initializes the Pygame window, loads assets, and sets up the game state.
+        """
+        pygame.init()
+        # Use a main screen and a separate surface for the board for easier positioning
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption("Code in Place 5 Chess Game")
+        
+        # Center the board on the screen
+        self.board_pos_x = (WIDTH - BOARD_WIDTH) // 2
+        self.board_pos_y = (HEIGHT - BOARD_HEIGHT) // 2
+
+        self.board = chess.Board()
+        self.piece_images = self.load_piece_images()
+        
+        self.selected_square = None
+        self.legal_moves = []
+
+        # Font for game over messages
+        self.font = pygame.font.SysFont("Arial", 48, bold=True)
+        self.small_font = pygame.font.SysFont("Arial", 24)
+
+    def load_piece_images(self):
+        """
+        Loads chess piece images from the 'pieces' directory.
+        The images must be named like 'wP.png', 'bK.png', etc.
+        """
+        images = {}
+        pieces = ['P', 'R', 'N', 'B', 'Q', 'K', 'p', 'r', 'n', 'b', 'q', 'k']
+        for piece in pieces:
+            # Determine filename based on chess.py piece representation
+            color = 'w' if piece.isupper() else 'b'
+            filename = f"{color}{piece.upper()}.png"
+            path = os.path.join("pieces", filename)
+            
+            try:
+                # Load the image and scale it to the size of a square
+                img = pygame.image.load(path).convert_alpha()
+                img = pygame.transform.smoothscale(img, (SQUARE_SIZE, SQUARE_SIZE))
+                images[piece] = img
+            except pygame.error:
+                print(f"Error: Could not load image for piece '{piece}' at path '{path}'")
+                print("Make sure you have a 'pieces' folder with correctly named PNG files.")
+                sys.exit(1)
+        return images
+
+    def draw_board(self):
+        """
+        Draws the checkerboard pattern.
+        """
+        for row in range(8):
+            for col in range(8):
+                color = LIGHT_SQUARE if (row + col) % 2 == 0 else DARK_SQUARE
+                pygame.draw.rect(self.screen, color, 
+                                 (self.board_pos_x + col * SQUARE_SIZE, 
+                                  self.board_pos_y + row * SQUARE_SIZE, 
+                                  SQUARE_SIZE, SQUARE_SIZE))
+
+    def draw_pieces(self):
+        """
+        Draws the pieces on the board based on the current board state.
+        """
+        for square in chess.SQUARES:
+            piece = self.board.piece_at(square)
+            if piece:
+                # chess.SQUARES are 0-63, so we convert to row/col
+                row = 7 - (square // 8) # Pygame y-axis is inverted
+                col = square % 8
+                
+                # Get the image for the piece
+                piece_img = self.piece_images[piece.symbol()]
+                
+                # Draw the piece
+                x = self.board_pos_x + col * SQUARE_SIZE
+                y = self.board_pos_y + row * SQUARE_SIZE
+                self.screen.blit(piece_img, (x, y))
+
+    def draw_highlights(self):
+        """
+        Highlights the selected square and all legal move destinations.
+        """
+        # Highlight the selected square
+        if self.selected_square is not None:
+            row = 7 - (self.selected_square // 8)
+            col = self.selected_square % 8
+            
+            # Create a transparent surface for highlighting
+            s = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+            s.fill(SELECTED_COLOR)
+            self.screen.blit(s, (self.board_pos_x + col * SQUARE_SIZE, 
+                                 self.board_pos_y + row * SQUARE_SIZE))
+        
+        # Highlight legal moves
+        for move in self.legal_moves:
+            dest_square = move.to_square
+            row = 7 - (dest_square // 8)
+            col = dest_square % 8
+            
+            # Draw a circle in the middle of the square
+            center_x = self.board_pos_x + col * SQUARE_SIZE + SQUARE_SIZE // 2
+            center_y = self.board_pos_y + row * SQUARE_SIZE + SQUARE_SIZE // 2
+            
+            s = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+            pygame.draw.circle(s, HIGHLIGHT_COLOR, (SQUARE_SIZE//2, SQUARE_SIZE//2), SQUARE_SIZE // 6)
+            self.screen.blit(s, (self.board_pos_x + col * SQUARE_SIZE, 
+                                 self.board_pos_y + row * SQUARE_SIZE))
+
+
+    def handle_click(self, pos):
+        """
+        Handles a mouse click event to select a piece or make a move.
+        """
+        # Convert pixel coordinates to board square index
+        col = (pos[0] - self.board_pos_x) // SQUARE_SIZE
+        row = (pos[1] - self.board_pos_y) // SQUARE_SIZE
+        
+        # Check if click is within the board boundaries
+        if not (0 <= col < 8 and 0 <= row < 8):
+            self.selected_square = None
+            self.legal_moves = []
+            return
+
+        square_index = chess.square(col, 7 - row) # Convert to chess.py's indexing (A1=0)
+
+        # If a piece was already selected, try to make a move
+        if self.selected_square is not None:
+            move = chess.Move(self.selected_square, square_index)
+            
+            # Handle pawn promotion (auto-promote to Queen for simplicity)
+            # A more complete GUI would ask the user which piece to promote to.
+            if self.board.piece_at(self.selected_square).piece_type == chess.PAWN:
+                if (chess.square_rank(square_index) == 7 and self.board.turn == chess.WHITE) or \
+                   (chess.square_rank(square_index) == 0 and self.board.turn == chess.BLACK):
+                    move.promotion = chess.QUEEN
+
+            if move in self.board.legal_moves:
+                self.board.push(move)
+                self.selected_square = None
+                self.legal_moves = []
+            # If the click is on another of the player's pieces, select that instead
+            elif self.board.piece_at(square_index) and \
+                 self.board.piece_at(square_index).color == self.board.turn:
+                self.selected_square = square_index
+                self.legal_moves = [m for m in self.board.legal_moves if m.from_square == square_index]
+            else: # Deselect if an invalid move is clicked
+                self.selected_square = None
+                self.legal_moves = []
+        else: # No piece selected, so select one
+            piece = self.board.piece_at(square_index)
+            # Only select if it's the current player's turn
+            if piece and piece.color == self.board.turn:
+                self.selected_square = square_index
+                self.legal_moves = [m for m in self.board.legal_moves if m.from_square == square_index]
+    
+    def draw_game_over_message(self):
+        """
+        Displays a game over message when the game ends.
+        """
+        outcome = self.board.outcome()
+        if outcome:
+            # Create a semi-transparent overlay
+            overlay = pygame.Surface((BOARD_WIDTH, BOARD_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180)) # Black overlay with some transparency
+            self.screen.blit(overlay, (self.board_pos_x, self.board_pos_y))
+            
+            # Determine the message
+            if outcome.winner is not None:
+                winner = "White" if outcome.winner == chess.WHITE else "Black"
+                text = f"{winner} wins by {outcome.termination.name}!"
+            else:
+                text = f"Draw by {outcome.termination.name}!"
+            
+            # Render and center the main text
+            text_surface = self.font.render(text, True, WHITE)
+            text_rect = text_surface.get_rect(center=(WIDTH / 2, HEIGHT / 2 - 20))
+            self.screen.blit(text_surface, text_rect)
+            
+            # Render and center the restart instructions
+            restart_text = "Press 'R' to play again."
+            restart_surface = self.small_font.render(restart_text, True, WHITE)
+            restart_rect = restart_surface.get_rect(center=(WIDTH / 2, HEIGHT / 2 + 30))
+            self.screen.blit(restart_surface, restart_rect)
+
+
+    def run(self):
+        """
+        The main game loop.
+        """
+        running = True
+        game_over = False
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if not game_over:
+                        self.handle_click(pygame.mouse.get_pos())
+                
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_r and game_over:
+                        # Reset the game
+                        self.board.reset()
+                        self.selected_square = None
+                        self.legal_moves = []
+                        game_over = False
+
+            # Drawing
+            self.screen.fill(BLACK) # Background color
+            self.draw_board()
+            self.draw_highlights()
+            self.draw_pieces()
+            
+            # Check for game over
+            if self.board.is_game_over():
+                game_over = True
+                self.draw_game_over_message()
+
+            pygame.display.flip()
+
+        pygame.quit()
+        sys.exit()
+
+
+if __name__ == "__main__":
+    game = ChessGUI()
+    game.run()
